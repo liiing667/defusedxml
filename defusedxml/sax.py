@@ -22,6 +22,8 @@ def parse(
     forbid_dtd=False,
     forbid_entities=True,
     forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
 ):
     parser = make_parser()
     parser.setContentHandler(handler)
@@ -29,6 +31,7 @@ def parse(
     parser.forbid_dtd = forbid_dtd
     parser.forbid_entities = forbid_entities
     parser.forbid_external = forbid_external
+    parser.set_budget(max_depth, max_nodes)
     parser.parse(source)
 
 
@@ -39,6 +42,8 @@ def parseString(
     forbid_dtd=False,
     forbid_entities=True,
     forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
 ):
     from io import BytesIO
 
@@ -50,6 +55,7 @@ def parseString(
     parser.forbid_dtd = forbid_dtd
     parser.forbid_entities = forbid_entities
     parser.forbid_external = forbid_external
+    parser.set_budget(max_depth, max_nodes)
 
     inpsrc = _InputSource()
     inpsrc.setByteStream(BytesIO(string))

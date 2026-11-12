@@ -11,9 +11,11 @@ import warnings
 
 from .common import (
     DefusedXmlException,
+    DepthExceeded,
     DTDForbidden,
     EntitiesForbidden,
     ExternalReferenceForbidden,
+    NodesExceeded,
     NotSupportedError,
     _apply_defusing,
 )
@@ -61,8 +63,10 @@ __version__ = "0.8.0rc2"
 
 __all__ = [
     "DefusedXmlException",
+    "DepthExceeded",
     "DTDForbidden",
     "EntitiesForbidden",
     "ExternalReferenceForbidden",
+    "NodesExceeded",
     "NotSupportedError",
 ]

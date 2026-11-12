@@ -72,6 +72,82 @@ class NotSupportedError(DefusedXmlException):
     """The operation is not supported"""
 
 
+class DepthExceeded(DefusedXmlException):
+    """The nesting depth of an element exceeds the configured limit"""
+
+    def __init__(self, depth, max_depth):
+        super().__init__()
+        self.depth = depth
+        self.max_depth = max_depth
+
+    def __str__(self):
+        return (
+            "DepthExceeded(depth={}, max_depth={})".format(
+                self.depth, self.max_depth
+            )
+        )
+
+
+class NodesExceeded(DefusedXmlException):
+    """The number of element nodes exceeds the configured limit"""
+
+    def __init__(self, count, max_nodes):
+        super().__init__()
+        self.count = count
+        self.max_nodes = max_nodes
+
+    def __str__(self):
+        return (
+            "NodesExceeded(count={}, max_nodes={})".format(
+                self.count, self.max_nodes
+            )
+        )
+
+
+def _normalize_limit(limit):
+    """Normalize a depth/node budget argument.
+
+    ``None`` or any non-positive value disables the limit.  Positive
+    integers are returned as-is.
+    """
+    if limit is None:
+        return 0
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise TypeError("limit must be an integer or None, got %r" % type(limit))
+    if limit <= 0:
+        return 0
+    return limit
+
+
+class _ElementBudget:
+    """Track element nesting depth and total element node count.
+
+    A ``max_depth`` of 0 disables the depth check, a ``max_nodes`` of 0
+    disables the node count check.
+    """
+
+    __slots__ = ("depth", "count", "max_depth", "max_nodes")
+
+    def __init__(self, max_depth=0, max_nodes=0):
+        self.depth = 0
+        self.count = 0
+        self.max_depth = _normalize_limit(max_depth)
+        self.max_nodes = _normalize_limit(max_nodes)
+
+    def start(self):
+        """Account for a newly opened element and enforce the budgets."""
+        self.depth += 1
+        self.count += 1
+        if self.max_depth and self.depth > self.max_depth:
+            raise DepthExceeded(self.depth, self.max_depth)
+        if self.max_nodes and self.count > self.max_nodes:
+            raise NodesExceeded(self.count, self.max_nodes)
+
+    def end(self):
+        """Account for a closed element."""
+        self.depth -= 1
+
+
 def _apply_defusing(defused_mod):
     assert defused_mod is sys.modules[defused_mod.__name__]
     stdlib_name = defused_mod.__origin__

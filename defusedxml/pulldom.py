@@ -21,21 +21,37 @@ def parse(
     forbid_dtd=False,
     forbid_entities=True,
     forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
 ):
     if parser is None:
         parser = make_parser()
         parser.forbid_dtd = forbid_dtd
         parser.forbid_entities = forbid_entities
         parser.forbid_external = forbid_external
+        parser.set_budget(max_depth, max_nodes)
+    elif max_depth or max_nodes:
+        # honor budgets even when a caller supplies its own parser
+        parser.set_budget(max_depth, max_nodes)
     return _parse(stream_or_string, parser, bufsize)
 
 
 def parseString(
-    string, parser=None, forbid_dtd=False, forbid_entities=True, forbid_external=True
+    string,
+    parser=None,
+    forbid_dtd=False,
+    forbid_entities=True,
+    forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
 ):
     if parser is None:
         parser = make_parser()
         parser.forbid_dtd = forbid_dtd
         parser.forbid_entities = forbid_entities
         parser.forbid_external = forbid_external
+        parser.set_budget(max_depth, max_nodes)
+    elif max_depth or max_nodes:
+        # honor budgets even when a caller supplies its own parser
+        parser.set_budget(max_depth, max_nodes)
     return _parseString(string, parser)

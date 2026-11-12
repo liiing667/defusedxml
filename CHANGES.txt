@@ -1,6 +1,16 @@
 Changelog
 =========
 
+defusedxml 0.8.0 (unreleased)
+-----------------------------
+
+- Add ``max_depth`` and ``max_nodes`` keyword arguments to all stdlib
+  facades (ElementTree including ``iterparse``, SAX, minidom and
+  pulldom) to protect against stack and memory exhaustion from deeply
+  nested or oversized element trees. The budgets are enforced
+  incrementally and raise the new ``DepthExceeded`` and
+  ``NodesExceeded`` exceptions. A value of 0 or None disables a limit.
+
 defusedxml 0.8.0
 ----------------
 

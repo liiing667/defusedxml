@@ -13,13 +13,24 @@ from xml.sax.saxutils import XMLGenerator
 from xml.sax import SAXParseException
 from pyexpat import ExpatError
 
-from defusedxml import ElementTree, minidom, pulldom, sax, xmlrpc, expatreader
+from defusedxml import (
+    ElementTree,
+    minidom,
+    pulldom,
+    sax,
+    xmlrpc,
+    expatreader,
+    expatbuilder,
+)
 from defusedxml import defuse_stdlib
 from defusedxml import (
+    DepthExceeded,
     DTDForbidden,
     EntitiesForbidden,
     ExternalReferenceForbidden,
+    NodesExceeded,
     NotSupportedError,
+    DefusedXmlException,
 )
 
 from xml.etree.ElementTree import Element as ElementAfterImport
@@ -29,6 +40,7 @@ if sys.version_info < (3, 7):
 
 
 with warnings.catch_warnings(record=True) as cetree_warnings:
+    warnings.simplefilter("always")
     from defusedxml import cElementTree
 
 
@@ -469,6 +481,217 @@ class TestDefusedLxml(BaseTests):
             schema.validate(doc)
 
 
+class TestElementBudget(unittest.TestCase):
+    """Depth and node count budgets across all stdlib facades."""
+
+    depth = 60
+    width = 60
+
+    deep_xml = (
+        b"<root>" + b"".join(b"<a>" for _ in range(depth))
+        + b"x" + b"".join(b"</a>" for _ in range(depth)) + b"</root>"
+    )
+    wide_xml = b"<root>" + b"<a/>" * width + b"</root>"
+    boundary_xml = b"<r><a><b/></a></r>"  # depth 3, 3 elements
+
+    def assertExceeded(self, exc, expected_type, limit, value):
+        self.assertIsInstance(exc, expected_type)
+        self.assertIsInstance(exc, DefusedXmlException)
+        self.assertIsInstance(exc, ValueError)
+        if expected_type is DepthExceeded:
+            self.assertEqual(exc.max_depth, limit)
+            self.assertEqual(exc.depth, value)
+        else:
+            self.assertEqual(exc.max_nodes, limit)
+            self.assertEqual(exc.count, value)
+
+    def test_exceptions(self):
+        exc = DepthExceeded(11, 10)
+        self.assertEqual(str(exc), "DepthExceeded(depth=11, max_depth=10)")
+        self.assertEqual(repr(exc), str(exc))
+        exc = NodesExceeded(6, 5)
+        self.assertEqual(str(exc), "NodesExceeded(count=6, max_nodes=5)")
+        self.assertEqual(repr(exc), str(exc))
+
+    def test_invalid_limit(self):
+        self.assertRaises(
+            TypeError, ElementTree.DefusedXMLParser, max_depth="10"
+        )
+        self.assertRaises(
+            TypeError, ElementTree.DefusedXMLParser, max_nodes=2.5
+        )
+        # bool is rejected even though it is an int subclass
+        self.assertRaises(
+            TypeError, ElementTree.DefusedXMLParser, max_depth=True
+        )
+
+    def test_defaults_unlimited(self):
+        # no budget configured: deeply nested and wide docs parse fine
+        ElementTree.fromstring(self.deep_xml)
+        ElementTree.fromstring(self.wide_xml)
+        minidom.parseString(self.deep_xml)
+        minidom.parseString(self.wide_xml)
+        list(pulldom.parseString(self.deep_xml.decode()))
+        list(pulldom.parseString(self.wide_xml.decode()))
+        buf = io.StringIO()
+        sax.parseString(self.deep_xml, XMLGenerator(buf))
+        # explicit zero / None disable the limits as well
+        ElementTree.fromstring(self.deep_xml, max_depth=0, max_nodes=None)
+        minidom.parseString(self.wide_xml, max_depth=None, max_nodes=0)
+
+    def test_boundary_accepted(self):
+        ElementTree.fromstring(self.boundary_xml, max_depth=3, max_nodes=3)
+        minidom.parseString(self.boundary_xml, max_depth=3, max_nodes=3)
+        expatbuilder.parseString(
+            self.boundary_xml, namespaces=False, max_depth=3, max_nodes=3
+        )
+        list(
+            pulldom.parseString(
+                self.boundary_xml.decode(), max_depth=3, max_nodes=3
+            )
+        )
+        buf = io.StringIO()
+        sax.parseString(
+            self.boundary_xml, XMLGenerator(buf), max_depth=3, max_nodes=3
+        )
+
+    def test_elementtree_depth(self):
+        with self.assertRaises(DepthExceeded) as ctx:
+            ElementTree.fromstring(self.deep_xml, max_depth=10)
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+
+        with self.assertRaises(DepthExceeded) as ctx:
+            ElementTree.fromstringlist(
+                [self.deep_xml[:40], self.deep_xml[40:]], max_depth=10
+            )
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".xml") as f:
+            f.write(self.deep_xml)
+            f.flush()
+            with self.assertRaises(DepthExceeded):
+                ElementTree.parse(f.name, max_depth=10)
+
+    def test_elementtree_nodes(self):
+        with self.assertRaises(NodesExceeded) as ctx:
+            ElementTree.fromstring(self.wide_xml, max_nodes=5)
+        # root + five <a/> elements trigger the breach on element six
+        self.assertExceeded(ctx.exception, NodesExceeded, 5, 6)
+
+    def test_iterparse_incremental_depth(self):
+        stream = io.BytesIO(self.deep_xml)
+        iterator = ElementTree.iterparse(
+            stream, events=("start", "end"), max_depth=10
+        )
+        with self.assertRaises(DepthExceeded) as ctx:
+            list(iterator)
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+
+    def test_iterparse_incremental_nodes(self):
+        # The exception must surface while pulling events, before the whole
+        # document has been materialized.
+        stream = io.BytesIO(b"<root>" + b"<a/>" * 1000 + b"</root>")
+        iterator = ElementTree.iterparse(stream, max_nodes=7)
+        pulled = 0
+        with self.assertRaises(NodesExceeded) as ctx:
+            for _ in iterator:
+                pulled += 1
+        self.assertExceeded(ctx.exception, NodesExceeded, 7, 8)
+        # only a handful of end events can have been produced
+        self.assertLess(pulled, 100)
+
+    def test_iterparse_chunked_feed(self):
+        # Feed data in small pieces to prove the check is incremental.
+        class Chunked:
+            def __init__(self, data, size=16):
+                self.data = data
+                self.size = size
+
+            def read(self, n=-1):
+                chunk, self.data = self.data[: self.size], self.data[self.size :]
+                return chunk
+
+        iterator = ElementTree.iterparse(
+            Chunked(self.deep_xml), max_depth=10
+        )
+        with self.assertRaises(DepthExceeded):
+            list(iterator)
+
+    def test_minidom_depth_and_nodes(self):
+        with self.assertRaises(DepthExceeded) as ctx:
+            minidom.parseString(self.deep_xml, max_depth=10)
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+        with self.assertRaises(NodesExceeded) as ctx:
+            minidom.parseString(self.wide_xml, max_nodes=5)
+        self.assertExceeded(ctx.exception, NodesExceeded, 5, 6)
+
+    def test_minidom_no_namespaces(self):
+        with self.assertRaises(DepthExceeded):
+            expatbuilder.parseString(
+                self.deep_xml, namespaces=False, max_depth=10
+            )
+        with self.assertRaises(NodesExceeded):
+            expatbuilder.parseString(
+                self.wide_xml, namespaces=False, max_nodes=5
+            )
+
+    def test_minidom_with_sax_parser(self):
+        stream = io.StringIO(self.deep_xml.decode())
+        parser = expatreader.create_parser()
+        with self.assertRaises(DepthExceeded):
+            minidom.parse(stream, parser=parser, bufsize=1, max_depth=10)
+
+    def test_pulldom_depth_and_nodes(self):
+        with self.assertRaises(DepthExceeded) as ctx:
+            list(pulldom.parseString(self.deep_xml.decode(), max_depth=10))
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+        with self.assertRaises(NodesExceeded) as ctx:
+            list(pulldom.parseString(self.wide_xml.decode(), max_nodes=5))
+        self.assertExceeded(ctx.exception, NodesExceeded, 5, 6)
+
+    def test_sax_depth_and_nodes(self):
+        def run(data, **kwargs):
+            buf = io.StringIO()
+            sax.parseString(data, XMLGenerator(buf), **kwargs)
+
+        with self.assertRaises(DepthExceeded) as ctx:
+            run(self.deep_xml, max_depth=10)
+        self.assertExceeded(ctx.exception, DepthExceeded, 10, 11)
+        with self.assertRaises(NodesExceeded) as ctx:
+            run(self.wide_xml, max_nodes=5)
+        self.assertExceeded(ctx.exception, NodesExceeded, 5, 6)
+
+    def test_parser_set_budget(self):
+        parser = expatreader.create_parser()
+        parser.set_budget(max_depth=10)
+        with self.assertRaises(DepthExceeded):
+            list(pulldom.parseString(self.deep_xml.decode(), parser))
+
+    def test_forbid_paths_still_work(self):
+        # existing forbid_* behavior must not regress when budgets are set
+        with self.assertRaises(DTDForbidden):
+            ElementTree.fromstring(
+                self.get_bomb_bytes(), forbid_dtd=True, max_depth=100
+            )
+        with self.assertRaises(EntitiesForbidden):
+            ElementTree.fromstring(
+                self.get_bomb_bytes(), max_depth=100, max_nodes=1000
+            )
+        with self.assertRaises(DTDForbidden):
+            minidom.parseString(
+                self.get_bomb_bytes(), forbid_dtd=True, max_depth=100
+            )
+
+    @staticmethod
+    def get_bomb_bytes():
+        with io.open(
+            os.path.join(HERE, "xmltestdata", "xmlbomb.xml"), "rb"
+        ) as f:
+            return f.read()
+
+
 class XmlRpcTarget(object):
     def __init__(self):
         self._data = []
@@ -589,11 +812,28 @@ def test_main():
         TestDefusedPulldom,
         TestDefusedSax,
         TestDefusedLxml,
+        TestElementBudget,
         TestXmlRpc,
         TestDefusedGzip,
     ]
     for c in cls:
         suite.addTest(unittest.defaultTestLoader.loadTestsFromTestCase(c))
+    return suite
+
+
+def load_tests(loader, tests, pattern):
+    # BaseTests is an abstract base class without parse()/parseString()
+    # implementations; exclude it from plain test discovery.
+    suite = unittest.TestSuite()
+
+    def _walk(test_suite):
+        for item in test_suite:
+            if isinstance(item, unittest.TestSuite):
+                _walk(item)
+            elif item.__class__ is not BaseTests:
+                suite.addTest(item)
+
+    _walk(tests)
     return suite
 
 

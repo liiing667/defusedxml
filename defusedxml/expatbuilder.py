@@ -10,7 +10,12 @@ from __future__ import print_function, absolute_import
 from xml.dom.expatbuilder import ExpatBuilder as _ExpatBuilder
 from xml.dom.expatbuilder import Namespaces as _Namespaces
 
-from .common import DTDForbidden, EntitiesForbidden, ExternalReferenceForbidden
+from .common import (
+    DTDForbidden,
+    EntitiesForbidden,
+    ExternalReferenceForbidden,
+    _ElementBudget,
+)
 
 __origin__ = "xml.dom.expatbuilder"
 
@@ -19,12 +24,19 @@ class DefusedExpatBuilder(_ExpatBuilder):
     """Defused document builder"""
 
     def __init__(
-        self, options=None, forbid_dtd=False, forbid_entities=True, forbid_external=True
+        self,
+        options=None,
+        forbid_dtd=False,
+        forbid_entities=True,
+        forbid_external=True,
+        max_depth=0,
+        max_nodes=0,
     ):
         _ExpatBuilder.__init__(self, options)
         self.forbid_dtd = forbid_dtd
         self.forbid_entities = forbid_entities
         self.forbid_external = forbid_external
+        self._budget = _ElementBudget(max_depth, max_nodes)
 
     def defused_start_doctype_decl(self, name, sysid, pubid, has_internal_subset):
         raise DTDForbidden(name, sysid, pubid)
@@ -53,6 +65,14 @@ class DefusedExpatBuilder(_ExpatBuilder):
         if self.forbid_external:
             parser.ExternalEntityRefHandler = self.defused_external_entity_ref_handler
 
+    def start_element_handler(self, name, attributes):
+        self._budget.start()
+        _ExpatBuilder.start_element_handler(self, name, attributes)
+
+    def end_element_handler(self, name):
+        self._budget.end()
+        _ExpatBuilder.end_element_handler(self, name)
+
 
 class DefusedExpatBuilderNS(_Namespaces, DefusedExpatBuilder):
     """Defused document builder that supports namespaces."""
@@ -62,12 +82,28 @@ class DefusedExpatBuilderNS(_Namespaces, DefusedExpatBuilder):
         if self._options.namespace_declarations:
             parser.StartNamespaceDeclHandler = self.start_namespace_decl_handler
 
+    def start_element_handler(self, name, attributes):
+        self._budget.start()
+        _Namespaces.start_element_handler(self, name, attributes)
+
+    def end_element_handler(self, name):
+        self._budget.end()
+        _Namespaces.end_element_handler(self, name)
+
     def reset(self):
         DefusedExpatBuilder.reset(self)
         self._initNamespaces()
 
 
-def parse(file, namespaces=True, forbid_dtd=False, forbid_entities=True, forbid_external=True):
+def parse(
+    file,
+    namespaces=True,
+    forbid_dtd=False,
+    forbid_entities=True,
+    forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
+):
     """Parse a document, returning the resulting Document node.
 
     'file' may be either a file name or an open file object.
@@ -77,7 +113,11 @@ def parse(file, namespaces=True, forbid_dtd=False, forbid_entities=True, forbid_
     else:
         build_builder = DefusedExpatBuilder
     builder = build_builder(
-        forbid_dtd=forbid_dtd, forbid_entities=forbid_entities, forbid_external=forbid_external
+        forbid_dtd=forbid_dtd,
+        forbid_entities=forbid_entities,
+        forbid_external=forbid_external,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
     )
 
     if isinstance(file, str):
@@ -92,7 +132,13 @@ def parse(file, namespaces=True, forbid_dtd=False, forbid_entities=True, forbid_
 
 
 def parseString(
-    string, namespaces=True, forbid_dtd=False, forbid_entities=True, forbid_external=True
+    string,
+    namespaces=True,
+    forbid_dtd=False,
+    forbid_entities=True,
+    forbid_external=True,
+    max_depth=0,
+    max_nodes=0,
 ):
     """Parse a document from a string, returning the resulting
     Document node.
@@ -102,6 +148,10 @@ def parseString(
     else:
         build_builder = DefusedExpatBuilder
     builder = build_builder(
-        forbid_dtd=forbid_dtd, forbid_entities=forbid_entities, forbid_external=forbid_external
+        forbid_dtd=forbid_dtd,
+        forbid_entities=forbid_entities,
+        forbid_external=forbid_external,
+        max_depth=max_depth,
+        max_nodes=max_nodes,
     )
     return builder.parseString(string)

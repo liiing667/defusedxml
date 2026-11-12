@@ -9,7 +9,12 @@ from __future__ import print_function, absolute_import
 
 from xml.sax.expatreader import ExpatParser as _ExpatParser
 
-from .common import DTDForbidden, EntitiesForbidden, ExternalReferenceForbidden
+from .common import (
+    DTDForbidden,
+    EntitiesForbidden,
+    ExternalReferenceForbidden,
+    _ElementBudget,
+)
 
 __origin__ = "xml.sax.expatreader"
 
@@ -24,11 +29,14 @@ class DefusedExpatParser(_ExpatParser):
         forbid_dtd=False,
         forbid_entities=True,
         forbid_external=True,
+        max_depth=0,
+        max_nodes=0,
     ):
         super().__init__(namespaceHandling, bufsize)
         self.forbid_dtd = forbid_dtd
         self.forbid_entities = forbid_entities
         self.forbid_external = forbid_external
+        self._budget = _ElementBudget(max_depth, max_nodes)
 
     def defused_start_doctype_decl(self, name, sysid, pubid, has_internal_subset):
         raise DTDForbidden(name, sysid, pubid)
@@ -44,6 +52,26 @@ class DefusedExpatParser(_ExpatParser):
 
     def defused_external_entity_ref_handler(self, context, base, sysid, pubid):
         raise ExternalReferenceForbidden(context, base, sysid, pubid)
+
+    def set_budget(self, max_depth=0, max_nodes=0):
+        """Configure the depth/node budgets after construction."""
+        self._budget = _ElementBudget(max_depth, max_nodes)
+
+    def start_element(self, name, attrs):
+        self._budget.start()
+        super().start_element(name, attrs)
+
+    def end_element(self, name):
+        self._budget.end()
+        super().end_element(name)
+
+    def start_element_ns(self, name, attrs):
+        self._budget.start()
+        super().start_element_ns(name, attrs)
+
+    def end_element_ns(self, name):
+        self._budget.end()
+        super().end_element_ns(name)
 
     def reset(self):
         super().reset()

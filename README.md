@@ -286,7 +286,7 @@ features of defusedxml explicitly.
 
 </div>
 
-All functions and parser classes accept three additional keyword
+All functions and parser classes accept five additional keyword
 arguments. They return either the same objects as the original functions
 or compatible subclasses.
 
@@ -303,10 +303,29 @@ disallow any access to remote or local resources in external entities or
 DTD and raising an *ExternalReferenceForbidden* exception when a DTD or
 entity references an external resource.
 
+max_depth (default: 0, unlimited)  
+limit the nesting depth of elements. A *DepthExceeded* exception is
+raised as soon as an opening element would push the current depth beyond
+the limit. The check is enforced incrementally, so `iterparse()` rejects
+a malicious document while it is being read rather than after building
+the full tree.
+
+max_nodes (default: 0, unlimited)  
+limit the total number of element nodes in the document. A
+*NodesExceeded* exception is raised when the element count exceeds the
+limit, also in an incremental fashion.
+
+Both budgets accept positive integers only; `0`, negative values or
+`None` disable the respective limit. The exceptions inherit from
+*DefusedXmlException* (and hence `ValueError`) and are raised at the
+point of violation across the ElementTree, SAX, minidom and pulldom
+facades.
+
 ### defusedxml (package)
 
 DefusedXmlException, DTDForbidden, EntitiesForbidden,
-ExternalReferenceForbidden, NotSupportedError
+ExternalReferenceForbidden, DepthExceeded, NodesExceeded,
+NotSupportedError
 
 defuse_stdlib() (*experimental*)
 
